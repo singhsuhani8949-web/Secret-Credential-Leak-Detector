@@ -1,2 +1,351 @@
 # Secret-Credential-Leak-Detector
 Find exposed API keys, passwords, tokens and private-key patterns in code repositories and generate safe remediation instructions . 
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Secret & Credential Leak Detector</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen font-sans antialiased">
+
+<!-- Header -->
+<header class="border-b border-slate-800 bg-slate-900/50 backdrop-blur sticky top-0 z-50">
+  <div class="max-w-7xl mx-auto px-4 py-4 flex justify-between items-center">
+    <div class="flex items-center space-x-3">
+      <div class="bg-rose-500/10 border border-rose-500/20 p-2.5 rounded-xl text-rose-400">
+        <i class="fa-solid fa-shield-halved text-xl"></i>
+      </div>
+      <div>
+        <h1 class="text-xl font-bold tracking-tight">Secret &amp; Credential Leak Detector</h1>
+        <p class="text-xs text-slate-400">Static Code Analysis &amp; Remediation Engine</p>
+      </div>
+    </div>
+    <div class="flex items-center space-x-2">
+      <span class="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+        <span class="w-1.5 h-1.5 mr-1.5 bg-emerald-400 rounded-full animate-pulse"></span> System Active
+      </span>
+    </div>
+  </div>
+</header>
+
+<!-- Main Content Container -->
+<main class="max-w-7xl mx-auto px-4 py-8 grid grid-cols-1 lg:grid-cols-12 gap-8">
+
+  <!-- Left Column: Input Panel -->
+  <div class="lg:col-span-6 flex flex-col space-y-4">
+    <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-xl flex flex-col flex-grow">
+      <div class="flex justify-between items-center mb-3">
+        <label for="codeInput" class="text-sm font-semibold text-slate-300 flex items-center">
+          <i class="fa-solid fa-code mr-2 text-indigo-400"></i> Paste Source Code or Configuration
+        </label>
+        <button onclick="loadSampleData()" class="text-xs text-indigo-400 hover:text-indigo-300 transition font-medium">
+          <i class="fa-solid fa-wand-magic-sparkles mr-1"></i> Load Sample Leaks
+        </button>
+      </div>
+      <textarea
+        id="codeInput"
+        rows="16"
+        placeholder="Paste your code snippet, .env file, or JSON configuration here..."
+        class="w-full bg-slate-950 border border-slate-800 rounded-xl p-4 text-sm font-mono text-slate-300 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition resize-y"
+      ></textarea>
+      <div class="flex items-center justify-between mt-4">
+        <span id="charCount" class="text-xs text-slate-500">0 characters</span>
+        <button onclick="analyzeCode()" class="bg-indigo-600 hover:bg-indigo-500 text-white px-6 py-2.5 rounded-xl text-sm font-semibold shadow-lg shadow-indigo-600/20 transition flex items-center">
+          <i class="fa-solid fa-magnifying-glass mr-2"></i> Scan for Secrets
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Right Column: Results & Remediation Panel -->
+  <div class="lg:col-span-6 flex flex-col space-y-4">
+    <div class="bg-slate-900 border border-slate-800 rounded-2xl p-5 shadow-xl flex flex-col h-full min-h-[500px]">
+      <div class="flex justify-between items-center mb-4 pb-3 border-b border-slate-800">
+        <h2 class="text-sm font-semibold text-slate-300 flex items-center">
+          <i class="fa-solid fa-triangle-exclamation mr-2 text-amber-400"></i> Scan Results &amp; Findings
+        </h2>
+        <div id="badgeContainer">
+          <span class="bg-slate-800 text-slate-400 text-xs px-2.5 py-1 rounded-lg font-medium">No Scan Run</span>
+        </div>
+      </div>
+      <!-- Results container -->
+      <div id="resultsContainer" class="flex-grow overflow-y-auto space-y-4 max-h-[600px] pr-1">
+        <div class="h-full flex flex-col items-center justify-center text-center p-8 text-slate-500">
+          <i class="fa-solid fa-shield-cat text-4xl mb-3 text-slate-600"></i>
+          <p class="text-sm font-medium">No vulnerabilities detected yet.</p>
+          <p class="text-xs text-slate-600 mt-1">Paste your code on the left and click "Scan for Secrets".</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</main>
+
+<script>
+  // ── Detection Patterns ────────────────────────────────────────────────────
+  // Each entry stores the regex as a *source string + flags* pair so a fresh
+  // RegExp object can be created per scan, avoiding shared lastIndex state
+  // across repeated calls to analyzeCode().
+  const secretPatterns = [
+    {
+      name: "AWS Access Key ID",
+      category: "Cloud Credentials",
+      severity: "High",
+      // Matches AKIA / AGPA / AIDA / AROA / AIPA / ANPA / ANVA / ASIA + 16 alphanumeric chars
+      regexSource: String.raw`\b(A3T[A-Z0-9]|AKIA|AGPA|AIDA|AROA|AIPA|ANPA|ANVA|ASIA)[A-Z0-9]{16}\b`,
+      regexFlags: "g",
+      remediation:
+        "1. Immediately deactivate the compromised Access Key in the AWS IAM Console.\n" +
+        "2. Review AWS CloudTrail logs for unauthorized activity.\n" +
+        "3. Generate a new key pair and store it securely using AWS Secrets Manager or environment variables."
+    },
+    {
+      name: "AWS Secret Access Key",
+      category: "Cloud Credentials",
+      severity: "Critical",
+      // Fixed: require a keyword prefix (awssecret/secret_key/etc.) immediately before the
+      // 40-char base64 value to eliminate the massive false-positive rate of the original
+      // bare [A-Z0-9/+=]{40} pattern.
+      regexSource: String.raw`(?:aws_?secret(?:_access)?_?key|AWS_SECRET[_A-Z]*)\s*[:=]\s*['"]?([A-Za-z0-9/+=]{40})['"]?`,
+      regexFlags: "gi",
+      remediation:
+        "1. Revoke the associated AWS Secret Key immediately via IAM.\n" +
+        "2. Scan your repository's commit history (e.g., using git-filter-repo) to purge the secret.\n" +
+        "3. Implement IAM roles or environment variables instead of hardcoding credentials."
+    },
+    {
+      name: "GitHub Personal Access Token",
+      category: "Version Control",
+      severity: "Critical",
+      regexSource: String.raw`\bghp_[a-zA-Z0-9]{36}\b`,
+      regexFlags: "g",
+      remediation:
+        "1. Revoke the token instantly under GitHub Settings > Developer Settings > Personal Access Tokens.\n" +
+        "2. Inspect repository access logs for unauthorized git clones or pushes.\n" +
+        "3. Use GitHub Secrets for CI/CD pipelines."
+    },
+    {
+      name: "Google API Key",
+      category: "API Keys",
+      severity: "Medium",
+      regexSource: String.raw`\bAIza[0-9A-Za-z\-_]{35}\b`,
+      regexFlags: "g",
+      remediation:
+        "1. Restrict API key usage in the Google Cloud Console by IP address, HTTP referrer, or API service.\n" +
+        "2. Delete the exposed key and generate a fresh restricted replacement."
+    },
+    {
+      name: "JSON Web Token (JWT)",
+      category: "Authentication Token",
+      severity: "Medium",
+      regexSource: String.raw`eyJ[a-zA-Z0-9\-_]+\.eyJ[a-zA-Z0-9\-_]+\.[a-zA-Z0-9\-_]+`,
+      regexFlags: "g",
+      remediation:
+        "1. Invalidate or rotate the signing secret/private key used to issue this token.\n" +
+        "2. Ensure tokens have short expiration times (TTL) and are never committed to source control."
+    },
+    {
+      name: "Private Key Block",
+      category: "Cryptographic Key",
+      severity: "Critical",
+      // Fixed: replaced [^-]+ with [\s\S]+? so the pattern crosses newlines (multi-line keys).
+      // The original [^-]+ never matched because private key content always spans multiple lines.
+      regexSource: String.raw`-----BEGIN (?:RSA |EC |DSA |OPENSSH |)PRIVATE KEY-----[\s\S]+?-----END (?:RSA |EC |DSA |OPENSSH |)PRIVATE KEY-----`,
+      regexFlags: "g",
+      remediation:
+        "1. Immediately revoke the certificate or SSH key associated with this private key.\n" +
+        "2. Remove the key from all public/private code repositories.\n" +
+        "3. Generate a new key pair with appropriate file permissions (chmod 600)."
+    },
+    {
+      name: "Generic API Key / Password Assignment",
+      category: "Hardcoded Secret",
+      severity: "High",
+      regexSource: String.raw`(?:api[_\-]?key|password|secret|auth[_\-]?token|access[_\-]?token)\s*[:=]\s*['"][a-zA-Z0-9_\-\.\/]{8,64}['"]`,
+      regexFlags: "gi",
+      remediation:
+        "1. Extract the credential into a secure environment variable (.env file or secret manager).\n" +
+        "2. Add the configuration file to your .gitignore list.\n" +
+        "3. Rotate the compromised credential immediately."
+    }
+  ];
+
+  // ── Helpers ───────────────────────────────────────────────────────────────
+
+  /** Escape a string so it is safe to inject into innerHTML. */
+  function escapeHtml(str) {
+    return str
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
+  }
+
+  /** Mask a secret: show first 6 + last 4 chars, replace the middle with bullets. */
+  function maskSecret(value) {
+    if (value.length > 12) {
+      return escapeHtml(value.substring(0, 6)) + "••••••••" + escapeHtml(value.substring(value.length - 4));
+    }
+    return "••••••••";
+  }
+
+  // ── Character count updater ───────────────────────────────────────────────
+  const codeInput = document.getElementById("codeInput");
+  codeInput.addEventListener("input", () => {
+    document.getElementById("charCount").innerText = `${codeInput.value.length} characters`;
+  });
+
+  // ── Sample data ───────────────────────────────────────────────────────────
+  function loadSampleData() {
+    const sample = `// Backend Configuration Sample
+const config = {
+    port: 3000,
+    awsKey: "AKIAIOSFODNN7EXAMPLE",
+    aws_secret_access_key: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+    githubToken: "ghp_C0mpR0m1s3dT0k3nEx4mpl3F0rD3m0Puri0ps00",
+    googleApiKey: "AIzaSyD-sampleApiKeyForTestingPurposes12345",
+    jwtToken: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c",
+    dbPassword: "SuperSecretPassword123!",
+    sslPrivateKey: \`-----BEGIN RSA PRIVATE KEY-----
+MIIEowIBAAKCAQEA0v7...SamplePrivateKeyData...
+-----END RSA PRIVATE KEY-----\`
+};`;
+    codeInput.value = sample;
+    document.getElementById("charCount").innerText = `${codeInput.value.length} characters`;
+  }
+
+  // ── Main scanning function ────────────────────────────────────────────────
+  function analyzeCode() {
+    const text = codeInput.value;
+    const resultsContainer = document.getElementById("resultsContainer");
+    const badgeContainer = document.getElementById("badgeContainer");
+
+    if (!text.trim()) {
+      resultsContainer.innerHTML = `
+        <div class="h-full flex flex-col items-center justify-center text-center p-8 text-amber-400/80">
+          <i class="fa-solid fa-circle-exclamation text-3xl mb-2"></i>
+          <p class="text-sm font-medium">Please enter or paste code to scan.</p>
+        </div>`;
+      badgeContainer.innerHTML = `<span class="bg-amber-500/10 text-amber-400 border border-amber-500/20 text-xs px-2.5 py-1 rounded-lg font-medium">Input Empty</span>`;
+      return;
+    }
+
+    const allFindings = [];
+
+    // Use matchAll with a *fresh* RegExp per scan to avoid shared lastIndex state.
+    secretPatterns.forEach(pattern => {
+      const regex = new RegExp(pattern.regexSource, pattern.regexFlags);
+      for (const match of text.matchAll(regex)) {
+        allFindings.push({
+          name: pattern.name,
+          category: pattern.category,
+          severity: pattern.severity,
+          matchedString: match[0],
+          index: match.index,
+          remediation: pattern.remediation
+        });
+      }
+    });
+
+    // ── Empty result ──────────────────────────────────────────────────────
+    if (allFindings.length === 0) {
+      badgeContainer.innerHTML = `<span class="bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-xs px-2.5 py-1 rounded-lg font-medium">0 Vulnerabilities</span>`;
+      resultsContainer.innerHTML = `
+        <div class="h-full flex flex-col items-center justify-center text-center p-8 text-emerald-400">
+          <i class="fa-solid fa-circle-check text-4xl mb-3"></i>
+          <p class="text-sm font-bold">No secrets or exposed credentials found!</p>
+          <p class="text-xs text-slate-400 mt-1">Your code snippet appears safe from known credential patterns.</p>
+        </div>`;
+      return;
+    }
+
+    // ── Severity counts (Critical / High / Medium) ────────────────────────
+    const criticalCount = allFindings.filter(f => f.severity === "Critical").length;
+    const highCount     = allFindings.filter(f => f.severity === "High").length;
+    const mediumCount   = allFindings.filter(f => f.severity === "Medium").length;
+
+    badgeContainer.innerHTML = `
+      <div class="flex space-x-2">
+        ${criticalCount > 0 ? `<span class="bg-rose-500/10 text-rose-400 border border-rose-500/20 text-xs px-2.5 py-1 rounded-lg font-bold">${criticalCount} Critical</span>` : ""}
+        ${highCount     > 0 ? `<span class="bg-amber-500/10 text-amber-400 border border-amber-500/20 text-xs px-2.5 py-1 rounded-lg font-bold">${highCount} High</span>` : ""}
+        ${mediumCount   > 0 ? `<span class="bg-blue-500/10 text-blue-400 border border-blue-500/20 text-xs px-2.5 py-1 rounded-lg font-bold">${mediumCount} Medium</span>` : ""}
+        <span class="bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 text-xs px-2.5 py-1 rounded-lg font-medium">${allFindings.length} Total</span>
+      </div>`;
+
+    // ── Build result cards using safe DOM construction ────────────────────
+    // Using createElement + textContent instead of raw innerHTML interpolation
+    // eliminates the XSS surface from user-controlled matchedString values.
+    resultsContainer.innerHTML = "";
+
+    allFindings.forEach(finding => {
+      const severityColor =
+        finding.severity === "Critical" ? "bg-rose-500/10 text-rose-400 border-rose-500/30" :
+        finding.severity === "High"     ? "bg-amber-500/10 text-amber-400 border-amber-500/30" :
+                                          "bg-blue-500/10 text-blue-400 border-blue-500/30";
+
+      // Mask the matched value (built from HTML-safe helpers)
+      const maskedDisplay = maskSecret(finding.matchedString);
+
+      // Outer card
+      const card = document.createElement("div");
+      card.className = "bg-slate-950 border border-slate-800 rounded-xl p-4 transition hover:border-slate-700";
+
+      // Header row (category + name + severity badge)
+      const header = document.createElement("div");
+      header.className = "flex justify-between items-start mb-2";
+
+      const titleBlock = document.createElement("div");
+
+      const categoryEl = document.createElement("span");
+      categoryEl.className = "text-xs font-semibold uppercase tracking-wider text-slate-400";
+      categoryEl.textContent = finding.category;
+
+      const nameEl = document.createElement("h3");
+      nameEl.className = "text-sm font-bold text-slate-200";
+      nameEl.textContent = finding.name;
+
+      titleBlock.appendChild(categoryEl);
+      titleBlock.appendChild(nameEl);
+
+      const badge = document.createElement("span");
+      badge.className = `text-xs px-2.5 py-0.5 rounded-full border font-medium ${severityColor}`;
+      badge.textContent = finding.severity;
+
+      header.appendChild(titleBlock);
+      header.appendChild(badge);
+
+      // Matched value row — maskedDisplay is already HTML-escaped via maskSecret()
+      const matchRow = document.createElement("div");
+      matchRow.className = "my-3 bg-slate-900 p-2.5 rounded-lg border border-slate-800/80 font-mono text-xs text-rose-300 flex justify-between items-center";
+      matchRow.innerHTML = `<span class="truncate mr-2">Found: ${maskedDisplay}</span>
+        <span class="text-[10px] text-slate-500 bg-slate-800 px-1.5 py-0.5 rounded">Index: ${finding.index}</span>`;
+
+      // Remediation section
+      const remBlock = document.createElement("div");
+      remBlock.className = "mt-3 pt-3 border-t border-slate-800/80";
+
+      const remLabel = document.createElement("p");
+      remLabel.className = "text-xs font-semibold text-slate-300 mb-1 flex items-center";
+      remLabel.innerHTML = `<i class="fa-solid fa-wrench mr-1.5 text-indigo-400"></i> Safe Remediation Steps:`;
+
+      const remPre = document.createElement("pre");
+      remPre.className = "text-xs text-slate-400 font-sans whitespace-pre-line leading-relaxed bg-slate-900/40 p-2.5 rounded-lg border border-slate-800/50";
+      remPre.textContent = finding.remediation; // textContent — never innerHTML
+
+      remBlock.appendChild(remLabel);
+      remBlock.appendChild(remPre);
+
+      card.appendChild(header);
+      card.appendChild(matchRow);
+      card.appendChild(remBlock);
+
+      resultsContainer.appendChild(card);
+    });
+  }
+</script>
+</body>
+</html>
